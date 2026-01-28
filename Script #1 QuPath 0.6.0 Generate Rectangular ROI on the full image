@@ -1,0 +1,24 @@
+// Script para QuPath 0.6.0
+// Crear un ROI rectangular que cubra toda la imagen
+
+import qupath.lib.objects.PathAnnotationObject
+import qupath.lib.roi.ROIs
+
+// Obtener datos de la imagen
+def imageData = getCurrentImageData()
+def server = imageData.getServer()
+
+// Dimensiones de la imagen
+def width = server.getWidth()
+def height = server.getHeight()
+
+// Crear un ROI rectangular (x, y, ancho, alto)
+def roi = ROIs.createRectangleROI(0, 0, width, height, null)
+
+// Crear anotación con el ROI
+def annotation = new PathAnnotationObject(roi)
+
+// Agregar anotación a la jerarquía
+addObject(annotation)
+
+print "ROI rectangular creado (${width} x ${height})"
