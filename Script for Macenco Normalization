@@ -1,0 +1,220 @@
+import cv2
+import numpy as np
+from sklearn.decomposition import PCA
+import os
+from pathlib import Path
+
+def rgb_to_od(img):
+    """
+    Convierte imagen RGB a densidad óptica (Optical Density)
+    """
+    img = img.astype(np.float32)
+    img[img == 0] = 1  # Evitar división por cero
+    return -np.log(img / 255)
+
+def od_to_rgb(od):
+    """
+    Convierte densidad óptica de vuelta a RGB
+    """
+    img = np.exp(-od)
+    img = np.clip(img, 0, 1)
+    return (img * 255).astype(np.uint8)
+
+def extract_stain_matrix(img_od, num_stains=2):
+    """
+    Extrae la matriz de tinción usando PCA
+    """
+    # Remodelar imagen para PCA
+    reshaped_od = img_od.reshape((-1, 3))
+    
+    # Eliminar píxeles de fondo (muy bajos valores OD)
+    od_threshold = 0.15
+    tissue_mask = np.sum(reshaped_od, axis=1) > od_threshold
+    tissue_od = reshaped_od[tissue_mask]
+    
+    # Aplicar PCA para obtener vectores de tinción
+    pca = PCA(n_components=num_stains)
+    pca.fit(tissue_od)
+    
+    # La matriz de tinción son los componentes principales
+    stain_matrix = pca.components_
+    
+    return stain_matrix
+
+def get_stain_statistics(img, stain_matrix):
+    """
+    Calcula las estadísticas (media y desviación estándar) de las tinciones
+    """
+    img_od = rgb_to_od(img)
+    reshaped_od = img_od.reshape((-1, 3))
+    
+    # Separar las tinciones
+    # stain_matrix tiene forma (2, 3), necesitamos multiplicar por su pseudoinversa
+    stains = np.dot(reshaped_od, np.linalg.pinv(stain_matrix))
+    stains = stains.reshape(img.shape[0], img.shape[1], -1)
+    
+    # Calcular estadísticas
+    means = np.mean(stains, axis=(0, 1))
+    stds = np.std(stains, axis=(0, 1))
+    
+    return means, stds
+
+def normalize_to_reference(img, stain_matrix_ref, target_means, target_stds):
+    """
+    Normaliza una imagen usando la matriz de tinción y estadísticas de referencia
+    """
+    # Convertir RGB a Densidad Óptica
+    img_od = rgb_to_od(img)
+    
+    # Remodelar para operaciones matriciales
+    reshaped_od = img_od.reshape((-1, 3))
+    
+    # Separar las tinciones usando la matriz de referencia
+    stains = np.dot(reshaped_od, np.linalg.pinv(stain_matrix_ref))
+    stains = stains.reshape(img.shape[0], img.shape[1], -1)
+    
+    # Normalizar las tinciones a las estadísticas de referencia
+    stains_normalized = (stains - np.mean(stains, axis=(0, 1))) / np.std(stains, axis=(0, 1))
+    stains_normalized = stains_normalized * target_stds + target_means
+    
+    # Reconstruir imagen desde tinciones normalizadas
+    od_normalized = np.dot(stains_normalized.reshape((-1, 2)), stain_matrix_ref)
+    od_normalized = od_normalized.reshape(img.shape)
+    
+    # Convertir de vuelta a RGB
+    img_reconstructed = od_to_rgb(od_normalized)
+    
+    return img_reconstructed
+
+def batch_normalize_images(reference_path, input_folder, output_folder):
+    """
+    Normaliza múltiples imágenes usando una imagen de referencia
+    
+    Args:
+        reference_path: Ruta de la imagen de referencia
+        input_folder: Carpeta con las imágenes a normalizar
+        output_folder: Carpeta donde se guardarán las imágenes normalizadas
+    """
+    # Crear carpeta de salida si no existe
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # Cargar imagen de referencia
+    print("=" * 60)
+    print("CARGANDO IMAGEN DE REFERENCIA")
+    print("=" * 60)
+    
+    ref_img = cv2.imread(reference_path)
+    if ref_img is None:
+        print(f"ERROR: No se pudo cargar la imagen de referencia: {reference_path}")
+        return
+    
+    print(f"✓ Imagen de referencia cargada: {reference_path}")
+    
+    # Extraer matriz de tinción y estadísticas de la referencia
+    print("\nExtrayendo parámetros de la imagen de referencia...")
+    ref_od = rgb_to_od(ref_img)
+    stain_matrix_ref = extract_stain_matrix(ref_od)
+    ref_means, ref_stds = get_stain_statistics(ref_img, stain_matrix_ref)
+    
+    print(f"✓ Matriz de tinción extraída:")
+    print(stain_matrix_ref)
+    print(f"✓ Medias de referencia: {ref_means}")
+    print(f"✓ Desviaciones estándar de referencia: {ref_stds}")
+    
+    # Obtener lista de imágenes a procesar
+    valid_extensions = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'}
+    image_files = [f for f in os.listdir(input_folder) 
+                   if Path(f).suffix.lower() in valid_extensions]
+    
+    if not image_files:
+        print(f"\nERROR: No se encontraron imágenes en {input_folder}")
+        return
+    
+    print("\n" + "=" * 60)
+    print(f"PROCESANDO {len(image_files)} IMÁGENES")
+    print("=" * 60)
+    
+    # Procesar cada imagen
+    success_count = 0
+    failed_count = 0
+    
+    for idx, filename in enumerate(image_files, 1):
+        input_path = os.path.join(input_folder, filename)
+        
+        # Saltar la imagen de referencia si está en la misma carpeta
+        if os.path.abspath(input_path) == os.path.abspath(reference_path):
+            print(f"\n[{idx}/{len(image_files)}] Saltando imagen de referencia: {filename}")
+            continue
+        
+        print(f"\n[{idx}/{len(image_files)}] Procesando: {filename}")
+        
+        try:
+            # Cargar imagen
+            img = cv2.imread(input_path)
+            if img is None:
+                print(f"  ✗ ERROR: No se pudo cargar {filename}")
+                failed_count += 1
+                continue
+            
+            # Normalizar imagen
+            img_normalized = normalize_to_reference(img, stain_matrix_ref, ref_means, ref_stds)
+            
+            # Guardar imagen normalizada
+            output_path = os.path.join(output_folder, f"normalized_{filename}")
+            cv2.imwrite(output_path, img_normalized)
+            
+            print(f"  ✓ Guardada: {output_path}")
+            success_count += 1
+            
+        except Exception as e:
+            print(f"  ✗ ERROR procesando {filename}: {e}")
+            failed_count += 1
+    
+    # Resumen final
+    print("\n" + "=" * 60)
+    print("RESUMEN DEL PROCESAMIENTO")
+    print("=" * 60)
+    print(f"✓ Imágenes procesadas exitosamente: {success_count}")
+    print(f"✗ Imágenes con errores: {failed_count}")
+    print(f"📁 Resultados guardados en: {output_folder}")
+    print("=" * 60)
+
+def main():
+    """
+    Función principal - CONFIGURA AQUÍ TUS RUTAS
+    """
+    # ========== CONFIGURA ESTAS RUTAS ==========
+    
+    # Ruta de la imagen de referencia
+    reference_image = r"C:\Users\Reference image\Referencia_FOXP3\A3_FOXP3_BC224-2176-20_10X_1.jpg"
+    
+    # Carpeta con las imágenes a normalizar (10-40 imágenes)
+    input_folder = r"C:\Users\Input_FOXP3"
+    
+    # Carpeta donde se guardarán las imágenes normalizadas
+    output_folder = r"C:\Users\Output_FOXP3"
+    
+    # ===========================================
+    
+    print("╔════════════════════════════════════════════════════════════╗")
+    print("║  NORMALIZACIÓN BATCH DE IMÁGENES HISTOLÓGICAS              ║")
+    print("╚════════════════════════════════════════════════════════════╝")
+    
+    # Verificar que las rutas existan
+    if not os.path.exists(reference_image):
+        print(f"\n❌ ERROR: La imagen de referencia no existe:")
+        print(f"   {reference_image}")
+        print("\n💡 Asegúrate de cambiar la ruta en el código.")
+        return
+    
+    if not os.path.exists(input_folder):
+        print(f"\n❌ ERROR: La carpeta de entrada no existe:")
+        print(f"   {input_folder}")
+        print("\n💡 Crea la carpeta o cambia la ruta en el código.")
+        return
+    
+    # Ejecutar normalización batch
+    batch_normalize_images(reference_image, input_folder, output_folder)
+
+if __name__ == "__main__":
+    main()
