@@ -1,0 +1,17 @@
+// 1️⃣ Configurar tipo de imagen
+setImageType('BRIGHTFIELD_H_DAB')
+
+// 2️⃣ Aplicar únicamente la deconvolución deseada
+def deconvolutionJson = """{
+    "Name" : "H-DAB TIM3 Macenko",
+    "Stain 1" : "Hematoxylin",
+    "Values 1" : "0.8612873929591751 0.47316584966562164 0.18519747687211555",
+    "Stain 2" : "DAB",
+    "Values 2" : "0.36480575130680876 0.7160918752934337 0.5950875481407827",
+    "Background" : " 240 236 241"
+}"""
+
+setColorDeconvolutionStains(deconvolutionJson)
+
+
+
