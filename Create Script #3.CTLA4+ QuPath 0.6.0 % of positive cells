@@ -1,0 +1,39 @@
+// Configurar imagen y deconvolución//
+setImageType('BRIGHTFIELD_H_DAB')
+
+def deconvolutionStain = '{"Name" :"H-DAB CTLA4 Macenko", "Stain 1" : "Hematoxylin", "Values 1" : "0.8416513291861497 0.526295982694661 0.12097759577148441", "Stain 2" : "DAB", "Values 2" : "0.47378447445995736 0.5647972205346503 0.6756717926900867", "Background" : " 164 172 191" }'
+
+setColorDeconvolutionStains(deconvolutionStain)
+
+// Seleccionar todas las anotaciones
+selectAnnotations()
+
+// Configuración única de PositiveCellDetection con umbral 0.13
+def json = """{
+    "detectionImageBrightfield":"Optical density sum",
+    "backgroundByReconstruction":true,
+    "backgroundRadius":8.0,
+    "medianRadius":0.0,
+    "sigma":1.2,
+    "minArea":3.0,
+    "maxArea":300.0,
+    "threshold":0.1,
+    "maxBackground":2.0,
+    "watershedPostProcess":true,
+    "excludeDAB":false,
+    "cellExpansion":1.0,
+    "includeNuclei":true,
+    "smoothBoundaries":true,
+    "makeMeasurements":true,
+    "thresholdCompartment":"Nucleus: DAB OD mean",
+    "thresholdPositive1":0.25,
+    "thresholdPositive2":0.4,
+    "thresholdPositive3":0.6,
+    "singleThreshold":true
+}"""
+
+// Ejecutar detección
+runPlugin('qupath.imagej.detect.cells.PositiveCellDetection', json)
+
+
+
