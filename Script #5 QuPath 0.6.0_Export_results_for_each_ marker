@@ -1,0 +1,121 @@
+import qupath.lib.scripting.QP
+import java.io.File
+
+// ========== CONFIGURACIÓN ==========
+def outputFile = new File("C:/Users")
+// ===================================
+
+// Verificar que hay un proyecto abierto
+def project = QP.getProject()
+if (project == null) {
+    println "ERROR: No hay ningún proyecto abierto en QuPath"
+    return
+}
+
+// Crear carpeta si no existe
+def parentDir = outputFile.getParentFile()
+if (!parentDir.exists()) {
+    parentDir.mkdirs()
+    println "Carpeta creada: ${parentDir}"
+}
+
+println "=" * 60
+println "EXPORTANDO RESULTADOS A CSV"
+println "=" * 60
+println "Proyecto: ${project.getName()}"
+println "Total de imágenes: ${project.getImageList().size()}"
+println "Archivo de salida: ${outputFile}"
+println "=" * 60
+
+// Contador de imágenes procesadas
+int processedCount = 0
+int errorCount = 0
+
+// Crear CSV con encabezado
+outputFile.withWriter('UTF-8') { writer ->
+    writer.writeLine("Imagen,Total_Celulas,Positivas,Negativas,Porcentaje_Positividad")
+    
+    // Recorrer todas las imágenes del proyecto
+    project.getImageList().each { imageEntry ->
+        try {
+            def imageName = imageEntry.getImageName()
+            println "\nProcesando: ${imageName}"
+            
+            // Leer los datos de la imagen
+            def imageData = imageEntry.readImageData()
+            
+            if (imageData == null) {
+                println "  ⚠ Advertencia: No se pudo leer la imagen"
+                writer.writeLine("${imageName},0,0,0,0.0")
+                errorCount++
+                return
+            }
+            
+            def hierarchy = imageData.getHierarchy()
+            
+            // Obtener todas las detecciones (células individuales)
+            def detections = hierarchy.getDetectionObjects()
+            
+            if (detections.isEmpty()) {
+                println "  ⚠ Advertencia: No hay detecciones en esta imagen"
+                writer.writeLine("${imageName},0,0,0,0.0")
+                errorCount++
+                return
+            }
+            
+            // Contar células positivas y negativas por clasificación
+            int positiveCells = 0
+            int negativeCells = 0
+            
+            detections.each { detection ->
+                def pathClass = detection.getPathClass()
+                if (pathClass != null) {
+                    def className = pathClass.toString()
+                    
+                    // Verificar si la célula es positiva o negativa
+                    if (className.contains("Positive")) {
+                        positiveCells++
+                    } else if (className.contains("Negative")) {
+                        negativeCells++
+                    }
+                }
+            }
+            
+            // Calcular totales y porcentaje
+            int totalCells = positiveCells + negativeCells
+            double percentPositive = 0.0
+            
+            if (totalCells > 0) {
+                percentPositive = (positiveCells / totalCells) * 100.0
+            }
+            
+            // Escribir la línea en CSV
+            writer.writeLine("${imageName},${totalCells},${positiveCells},${negativeCells},${String.format('%.2f', percentPositive)}")
+            
+            println "  ✓ Datos exportados: ${totalCells} células totales"
+            println "    - Positivas: ${positiveCells}"
+            println "    - Negativas: ${negativeCells}"
+            println "    - Positividad: ${String.format('%.2f', percentPositive)}%"
+            
+            processedCount++
+            
+            // Cerrar imagen para liberar memoria
+            imageData.getServer().close()
+            
+        } catch (Exception e) {
+            println "  ✗ ERROR procesando imagen: ${e.getMessage()}"
+            e.printStackTrace()
+            errorCount++
+        }
+    }
+}
+
+// Resumen final
+println "\n" + "=" * 60
+println "RESUMEN DE EXPORTACIÓN"
+println "=" * 60
+println "✓ Imágenes procesadas exitosamente: ${processedCount}"
+println "✗ Imágenes con errores/advertencias: ${errorCount}"
+println "📁 Archivo guardado en: ${outputFile}"
+println "=" * 60
+println "✅ Exportación completada"
