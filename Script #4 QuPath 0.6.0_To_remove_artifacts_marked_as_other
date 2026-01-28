@@ -1,0 +1,39 @@
+// Obtener todas las células detectadas
+def cells = getDetectionObjects()
+
+// Obtener anotaciones clasificadas como "Other"
+def otherAnnotations = getAnnotationObjects().findAll { 
+    it.getPathClass() != null && it.getPathClass().getName() == "Other" 
+}
+
+if (otherAnnotations.isEmpty()) {
+    print 'No hay anotaciones clasificadas como "Other"'
+    return
+}
+
+def cellsToRemove = []
+
+// Para cada célula, verificamos si está dentro de algún ROI "Other"
+for (cell in cells) {
+    def roi = cell.getROI()
+    double centroidX = roi.getCentroidX()
+    double centroidY = roi.getCentroidY()
+
+    def insideOther = otherAnnotations.any { annotation ->
+        annotation.getROI().contains(centroidX, centroidY)
+    }
+    if (insideOther) {
+        cellsToRemove << cell
+    }
+}
+
+print "Células totales: ${cells.size()}"
+print "Células dentro de ROIs 'Other': ${cellsToRemove.size()}"
+
+// Remover las células dentro de ROIs "Other"
+if (cellsToRemove.size() > 0) {
+    removeObjects(cellsToRemove)
+    print "Se eliminaron ${cellsToRemove.size()} células dentro de ROIs 'Other'."
+} else {
+    print "No se encontraron células dentro de ROIs 'Other'."
+}
